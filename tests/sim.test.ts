@@ -1,5 +1,6 @@
 import { describe, it, expect, beforeAll } from "vitest";
 import { World } from "../src/sim/world";
+import { findPath, nearestNode } from "../src/sim/pathfind";
 
 /** Headless lifecycle test: run the sim fast and verify the full turnaround loop. */
 function fastForward(w: World, seconds: number) {
@@ -51,6 +52,37 @@ describe("AIRPORT // OPS simulation lifecycle", () => {
   it("no deadlocks: no aircraft blocked > 60s of sim time on the same node", () => {
     const movers = [...w.aircraft.values()].map((a) => a.mover.blockedSince).filter((b) => b > 60);
     expect(movers.length, "aircraft stuck > 60s").toBeLessThan(2);
+  });
+
+  it("player-built stands are fully functional (regression: unregistered edges deadlocked movers)", () => {
+    const w2 = new World(42);
+    let ac: any = undefined;
+    for (let i = 0; i < 90000 && !ac; i++) {
+      w2.tick(1 / 30);
+      ac = [...w2.aircraft.values()].find((a) => a.phase === "taxiIn" || a.phase === "turnaround" || a.phase === "pushback");
+    }
+    expect(ac).toBeDefined();
+    const sd = w2.addStandAt(1290, -205, ["small", "medium"], "S7", 0);
+    expect(sd).not.toBeNull();
+    const startNode = nearestNode(w2.net, ac.pos.x, ac.pos.y, undefined, 400);
+    expect(startNode).not.toBeNull();
+    w2.standOcc.set(sd!.id, ac.flight.id);
+    ac.targetStand = sd!.id;
+    ac.flight.standId = sd!.id;
+    ac.standNode = sd!.node;
+    ac.standHeading = sd!.heading;
+    ac.standLeadNode = sd!.leadNode;
+    const path = findPath(w2.net, startNode!, sd!.node, { aircraft: true, onlyStand: sd!.id });
+    expect(path).not.toBeNull();
+    ac.setTaxiPath(path!);
+    ac.flight.phase = "taxiIn";
+    let settled = false;
+    for (let i = 0; i < 40000 && !settled; i++) {
+      w2.tick(1 / 30);
+      settled = ac.phase === "turnaround";
+    }
+    expect(settled, "aircraft should reach the player-built stand").toBe(true);
+    expect(ac.mover.blockedSince).toBeLessThan(10);
   });
 
   it("money is spent on staff but still solvent", () => {

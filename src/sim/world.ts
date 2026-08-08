@@ -778,6 +778,25 @@ export class World {
   /** park a vehicle at the nearest free apron node (ground crews stay on the apron) */
   private parkVehicle(v: VehicleSim) {
     const from = nearestNode(this.net, v.mover.pos.x, v.mover.pos.y, undefined, 120) ?? v.state.homeNode;
+    // fuel trucks live at the fuel depot
+    if (v.state.kind === "fuel") {
+      const fuelNodes = this.net.nodes.filter((n) => n.service === "fuel");
+      if (fuelNodes.length > 0) {
+        let best = fuelNodes[0];
+        let bd = 1e9;
+        for (const n of fuelNodes) {
+          const d = Math.hypot(n.x - v.mover.pos.x, n.y - v.mover.pos.y);
+          if (d < bd) {
+            bd = d;
+            best = n;
+          }
+        }
+        v.parkTarget = best.id;
+        const path = findPath(this.net, from, best.id, { vehicles: true });
+        if (path) v.mover.setPath(path);
+        return;
+      }
+    }
     let park = this.apronPark[0] ?? v.state.homeNode;
     let best = Infinity;
     for (const n of this.apronPark) {
@@ -796,9 +815,11 @@ export class World {
     if (path) v.mover.setPath(path);
   }
 
-  /** deadlock resolution: reroute a blocked vehicle around congestion */
+  /** deadlock resolution: reroute a blocked vehicle around congestion.
+   *  Start from the node AHEAD of its nose so it never teleports backwards. */
   private rerouteVehicle(v: VehicleSim, target: number) {
-    const from = nearestNode(this.net, v.mover.pos.x, v.mover.pos.y, undefined, 150) ?? v.state.homeNode;
+    const ahead = v.mover.path[Math.min(v.mover.edgeIdx + 1, v.mover.path.length - 1)];
+    const from = ahead !== undefined ? ahead : nearestNode(this.net, v.mover.pos.x, v.mover.pos.y, undefined, 60) ?? v.state.homeNode;
     const path = findPath(this.net, from, target, {
       vehicles: true,
       trafficCost: (edgeId) => this.traffic.occupied(edgeId) * 35,
@@ -809,7 +830,8 @@ export class World {
 
   /** deadlock resolution for taxiing aircraft */
   private rerouteAircraft(ac: AircraftSim, target: number) {
-    const from = nearestNode(this.net, ac.pos.x, ac.pos.y, undefined, 150) ?? this.startNode(ac);
+    const ahead = ac.mover.path[Math.min(ac.mover.edgeIdx + 1, ac.mover.path.length - 1)];
+    const from = ahead !== undefined ? ahead : nearestNode(this.net, ac.pos.x, ac.pos.y, undefined, 60) ?? this.startNode(ac);
     const path = findPath(this.net, from, target, {
       aircraft: true,
       trafficCost: (edgeId) => this.traffic.occupied(edgeId) * 35,
@@ -872,6 +894,15 @@ export class World {
     const apron = nearestNode(this.net, x, y + 35, ["taxiway"], 80);
     if (apron == null) return null;
     this.net.connectStand(sd, apron, 0);
+    // register every new node/edge with the traffic system, or movers freeze on them
+    this.traffic.registerNode(sd.node);
+    this.traffic.registerNode(sd.leadNode);
+    this.traffic.registerNode(sd.serviceNode);
+    for (const e of this.net.edges) {
+      if (e.standId === sd.id || e.a === sd.leadNode || e.b === sd.leadNode || e.a === sd.serviceNode || e.b === sd.serviceNode) {
+        this.traffic.registerEdge(e.id, this.net.edgeBlocks(e));
+      }
+    }
     this.airport.stands.push(sd);
     this.standOcc.set(sd.id, -1);
     return sd;
@@ -879,11 +910,25 @@ export class World {
 
   addTaxiwayNodeAt(x: number, y: number, connectTo?: number) {
     const n = this.net.addNode(x, y, "taxiway");
+    this.traffic.registerNode(n);
     if (connectTo !== undefined) {
       const existing = this.net.edgeBetween(n, connectTo);
-      if (!existing) this.net.addEdge(n, connectTo, { kind: "taxiway", maxSpeed: 8 });
+      if (!existing) {
+        const eid = this.net.addEdge(n, connectTo, { kind: "taxiway", maxSpeed: 8 });
+        this.traffic.registerEdge(eid, this.net.edgeBlocks(this.net.edge(eid)));
+      }
     }
     return n;
+  }
+
+  /** remove a stand and its edges (delete tool) */
+  removeStand(standId: number) {
+    const sd = this.airport.stands.find((s) => s.id === standId);
+    if (!sd) return;
+    this.airport.stands = this.airport.stands.filter((s) => s.id !== standId);
+    this.standOcc.delete(standId);
+    this.net.edges = this.net.edges.filter((e) => e.standId !== standId && e.a !== sd.leadNode && e.b !== sd.leadNode && e.a !== sd.serviceNode && e.b !== sd.serviceNode);
+    this.net.nodes = this.net.nodes.filter((n) => n.id !== sd.node && n.id !== sd.leadNode && n.id !== sd.serviceNode);
   }
 }
 

@@ -57,6 +57,18 @@ effortless as Mini Motorways.
    (synchronous fast-forward) or the headless scripts for QA.
 10. **The game is a real-time sim first, a game second.** Balance changes go through
     `src/game/config.ts`; verify with `npm test` + `stress.mts`.
+11. **Every built edge/node must be registered with `Traffic`** (`registerEdge`/`registerNode`).
+    `addStandAt`/`addTaxiwayNodeAt` do this; anything that adds geometry directly to the
+    net without registering freezes every mover routed onto it (silent deadlock, proven by
+    the player-built-stand regression test).
+12. **The renderer must switch on `ac.phase` (AircraftSim), never `f.phase`.** `flight.phase`
+    is stale after spawn; checking it made every aircraft invisible (rule 1 enforced in
+    `drawAgents`, the label loop, and nav-light loop too).
+13. **Reroutes start from the node AHEAD on the mover's current path** (`path[edgeIdx+1]`),
+    never from an arbitrary nearby node — otherwise a blocked mover teleports backwards
+    up to 150m.
+14. **Vehicles park on the apron, not the depot** (fuel trucks park at the nearest
+    `service === "fuel"` node). Depot round-trips destroyed service throughput.
 
 ## Dev hooks (browser)
 

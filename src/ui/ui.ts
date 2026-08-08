@@ -125,13 +125,13 @@ export class UI {
     set("k-sat", `${(w.stats.sat * 100).toFixed(0)}%`);
     set("k-ops", `${w.stats.arrivals}✈/${w.stats.departures}✈`);
 
-    // flight board
+    // flight board (phase source of truth is AircraftSim.phase)
     const flights = [...w.aircraft.values()].sort((a, b) => a.flight.schedTime - b.flight.schedTime);
     let board = "";
     if (flights.length === 0) board = `<div class="board-empty">No movements yet</div>`;
     for (const ac of flights.slice(0, 14)) {
       const f = ac.flight;
-      const phase = f.phase === "turnaround" ? "TURN" : f.phase.toUpperCase();
+      const phase = f.phase === "turnaround" ? "TURN" : ac.phase.toUpperCase();
       const delay = Math.round(f.delay / 60);
       const dCls = delay > 15 ? "late" : delay < -5 ? "early" : "";
       board += `<div class="flight-row">

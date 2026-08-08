@@ -123,6 +123,12 @@ export class InputController {
           const target = nearestNode(w.net, x, y, ["taxiway", "hold"], 14);
           if (target !== null && target !== bs.node) {
             this.buildSegment(bs.node, target);
+          } else if (target === null) {
+            // drag from a node into open space: create a new node + segment
+            const nx = this.snap(x);
+            const ny = this.snap(y);
+            const created = this.addNode(nx, ny);
+            this.buildSegment(bs.node, created);
           }
         } else {
           // free placement: create node, connect to nearest within 80m
@@ -178,7 +184,20 @@ export class InputController {
       }
       case "delete": {
         const n = nearestNode(w.net, x, y, undefined, 30);
-        if (n !== null) this.removeNode(n);
+        if (n !== null) {
+          const node = w.net.node(n);
+          if (node.kind === "stand") {
+            // delete a stand: find which one and remove it + its edges
+            const sd = w.airport.stands.find((s) => s.node === n);
+            if (sd) {
+              w.removeStand(sd.id);
+              this.renderDirty();
+              this.toast(`Removed stand ${sd.label}`);
+            }
+          } else {
+            this.removeNode(n);
+          }
+        }
         break;
       }
     }
