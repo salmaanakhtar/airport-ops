@@ -29,7 +29,7 @@ describe("AIRPORT // OPS simulation lifecycle", () => {
     fastForward(w, 200);
     const atStand = [...w.aircraft.values()].find((a) => a.phase === "turnaround");
     expect(atStand, "no aircraft reached turnaround").toBeDefined();
-    expect(w.stats.ops).toBeGreaterThan(0);
+    expect(w.stats.arrivals).toBeGreaterThan(0);
   });
 
   it("queues service jobs and sends vehicles", () => {
