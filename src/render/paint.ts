@@ -137,7 +137,7 @@ export class AirfieldPainter {
       g.globalAlpha = 1;
     }
     // darker mown stripes (airfield grass banding)
-    g.fillStyle = "rgba(20,26,14,0.18)";
+    g.fillStyle = "rgba(20,26,14,0.09)";
     const gs = 22;
     const wx0 = cam.worldX(0);
     const wy0 = cam.worldY(0);
@@ -309,9 +309,9 @@ export class AirfieldPainter {
       g.lineTo(b.x - px * hw, b.y - py * hw);
       g.stroke();
 
-      // centerline dashes
+      // centerline dashes (ICAO: ~30m dash, 20m gap)
       g.lineWidth = 0.55;
-      g.setLineDash([12, 24]);
+      g.setLineDash([30, 20]);
       g.beginPath();
       g.moveTo(a.x, a.y);
       g.lineTo(b.x, b.y);

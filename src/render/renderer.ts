@@ -49,7 +49,7 @@ export class Renderer {
 
     if (night) {
       g.setTransform(1, 0, 0, 1, 0, 0);
-      g.fillStyle = "rgba(8,10,26,0.66)";
+      g.fillStyle = "rgba(8,10,26,0.52)";
       g.fillRect(0, 0, this.canvas.width, this.canvas.height);
       // light glows
       this.drawLightsScreen(g);
@@ -77,12 +77,12 @@ export class Renderer {
     const t = w.airport.terminal;
     const tx = (t.x + t.w / 2 - cam.x) * cam.ppm + cam.viewW / 2;
     const ty = (t.y - 20 - cam.y) * cam.ppm + cam.viewH / 2;
-    if (tx > -320 && tx < cam.viewW + 320) {
-      const grad = g.createRadialGradient(tx, ty, 10, tx, ty, 320);
-      grad.addColorStop(0, "rgba(255,214,150,0.25)");
+    if (tx > -380 && tx < cam.viewW + 380) {
+      const grad = g.createRadialGradient(tx, ty, 10, tx, ty, 380);
+      grad.addColorStop(0, "rgba(255,214,150,0.42)");
       grad.addColorStop(1, "rgba(0,0,0,0)");
       g.fillStyle = grad;
-      g.fillRect(tx - 320, ty - 320, 640, 640);
+      g.fillRect(tx - 380, ty - 380, 760, 760);
     }
     for (const r of net.runways) {
       const a = net.node(r.thresholdNode[0]);
@@ -109,8 +109,12 @@ export class Renderer {
     // apron floodlight pools: large soft circles along the apron edge
     for (const n of net.nodes) {
       if (n.kind === "taxiway" && n.y === -140) {
-        glow(n.x, n.y - 40, 75, "rgba(255,240,200,0.14)");
+        glow(n.x, n.y - 30, 110, "rgba(255,240,200,0.30)");
       }
+    }
+    // stand-area pools (brightest zones at the gates)
+    for (const s of w.airport.stands) {
+      glow(s.x, s.y + 8, 85, "rgba(255,236,190,0.22)");
     }
     // taxiway blue edge lights (glowing at night)
     const seen = new Set<string>();
@@ -136,7 +140,7 @@ export class Renderer {
     // aircraft nav + landing lights
     for (const ac of w.aircraft.values()) {
       const f = ac.flight;
-      if (f.phase === "cruise" || f.phase === "gone") continue;
+      if (ac.phase === "cruise" || ac.phase === "gone") continue;
       const p = ac.pos;
       const h = ac.heading;
       const half = f.acTypeDef.len / 2;
@@ -166,16 +170,18 @@ export class Renderer {
       const sv = v.state;
       push(sv.pos.y, () => drawVehicle(g, v, cam, world));
     }
-    // aircraft
+    // aircraft (phase source of truth is AircraftSim.phase, NOT flight.phase)
     for (const ac of world.aircraft.values()) {
       const f = ac.flight;
-      if (f.phase === "cruise") continue;
-      if (f.phase === "gone") continue;
+      if (ac.phase === "cruise") continue;
+      if (ac.phase === "gone") continue;
       const p = ac.pos;
       push(p.y, () => drawAircraft(g, ac, cam, night));
     }
     items.sort((a, b) => a.y - b.y);
+    (window as any).__dbgItems = items.length;
     for (const it of items) it.draw();
+    (window as any).__dbgItemsAfter = items.length;
 
     // labels on top
     const zoomed = cam.ppm > 1.6;
@@ -184,7 +190,7 @@ export class Renderer {
       g.font = "5px monospace";
       for (const ac of world.aircraft.values()) {
         const f = ac.flight;
-        if (f.phase === "cruise" || f.phase === "gone" || f.phase === "landing" || f.phase === "takeoff") continue;
+        if (ac.phase === "cruise" || ac.phase === "gone" || ac.phase === "landing" || ac.phase === "takeoff") continue;
         const p = ac.pos;
         g.fillStyle = "rgba(10,12,16,0.65)";
         const label = `${f.flightNo}`;
