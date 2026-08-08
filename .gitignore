@@ -2,3 +2,4 @@ node_modules/
 dist/
 dev-server.log
 *.local
+shots/
