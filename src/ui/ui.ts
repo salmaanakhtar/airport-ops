@@ -61,9 +61,10 @@ export class UI {
     const tools: { id: ToolId; icon: string; label: string; cost?: string; key: string }[] = [
       { id: "pan", icon: "✋", label: "Pan", key: "1" },
       { id: "taxiway", icon: "—", label: "Taxiway", cost: "$400/m", key: "2" },
-      { id: "stand", icon: "◫", label: "Stand", cost: "$700k", key: "3" },
+      { id: "stand", icon: "◫", label: "Stand", cost: "$360k", key: "3" },
       { id: "fuel", icon: "⛽", label: "Fuel depot", cost: "$200k", key: "4" },
-      { id: "delete", icon: "✕", label: "Remove", key: "5" },
+      { id: "runway", icon: "▬", label: "Runway", cost: "$900/m", key: "5" },
+      { id: "delete", icon: "✕", label: "Remove", key: "6" },
     ];
     const tb = this.root.querySelector("#toolbar")!;
     for (const t of tools) {
@@ -74,6 +75,21 @@ export class UI {
       this.toolButtons[t.id] = b;
       tb.appendChild(b);
     }
+    // fleet panel toggle
+    const fleetBtn = document.createElement("button");
+    fleetBtn.className = "tool-btn";
+    fleetBtn.innerHTML = `<span class="tool-icon">🚚</span><span class="tool-label">Fleet<br><small>buy vehicles</small></span>`;
+    fleetBtn.addEventListener("click", () => this.toggleFleet());
+    tb.appendChild(fleetBtn);
+    const fleetPanel = document.createElement("div");
+    fleetPanel.className = "fleet-panel";
+    fleetPanel.id = "fleet-panel";
+    fleetPanel.innerHTML = `
+      <div class="panel-title">GROUND FLEET</div>
+      <div class="fleet-list" id="fleet-list"></div>
+    `;
+    tb.appendChild(fleetPanel);
+    this.fleetPanel = fleetPanel;
     this.setTool("pan");
 
     const speedBtns = this.root.querySelectorAll<HTMLButtonElement>(".speedctl button");
@@ -89,6 +105,39 @@ export class UI {
   }
 
   resize() {}
+
+  private fleetPanel: HTMLElement | null = null;
+  private fleetOpen = false;
+
+  toggleFleet() {
+    this.fleetOpen = !this.fleetOpen;
+    if (this.fleetPanel) this.fleetPanel.style.display = this.fleetOpen ? "block" : "none";
+  }
+
+  private updateFleet() {
+    const panel = this.fleetPanel;
+    if (!panel || !this.fleetOpen) return;
+    const w = this.engine.world;
+    const kinds = ["fuel", "baggage", "catering", "push"] as const;
+    const labels: Record<string, string> = { fuel: "Fuel trucks", baggage: "Baggage carts", catering: "Catering", push: "Pushback tugs" };
+    let html = "";
+    for (const k of kinds) {
+      const n = w.vehicleCount(k);
+      html += `<div class="fleet-row">
+        <span class="fleet-name">${labels[k]}</span>
+        <span class="fleet-count">×${n}</span>
+        <button class="fleet-buy" data-kind="${k}">Buy $150k</button>
+      </div>`;
+    }
+    panel.querySelector("#fleet-list")!.innerHTML = html;
+    for (const btn of panel.querySelectorAll<HTMLButtonElement>(".fleet-buy")) {
+      btn.addEventListener("click", () => {
+        const ok = this.engine.world.buyVehicle(btn.dataset.kind!);
+        this.toast(ok ? "Vehicle ordered" : "Not enough funds");
+        this.updateFleet();
+      });
+    }
+  }
 
   setTool(t: ToolId) {
     for (const [id, b] of Object.entries(this.toolButtons)) b.classList.toggle("active", id === t);
@@ -118,6 +167,7 @@ export class UI {
     set("airport-name", `${w.airport.name} · ${w.airport.icao} · LVL ${w.level}`);
     set("k-money", fmtMoney(w.money));
     set("k-level", String(w.level));
+    this.updateFleet();
     const mins = Math.floor((w.time % 1440) / 60);
     const secs = Math.floor(w.time % 60);
     set("k-time", `${String(mins).padStart(2, "0")}:${String(secs).padStart(2, "0")} (d${Math.floor(w.time / 1440) + 1})`);

@@ -7,7 +7,7 @@ import { VehicleSim } from "./vehicles";
 import { findPath, nearestNode } from "./pathfind";
 import { Scheduler } from "./schedule";
 import { Rng } from "../game/rng";
-import { AIRLINES, AC_BY_CODE, ECO, SIM } from "../game/config";
+import { AIRLINES, AC_BY_CODE, ECO, VEHICLE_BY_KIND, SIM } from "../game/config";
 import type {
   Flight,
   PassengerBatch,
@@ -54,7 +54,7 @@ export class World {
   net: Network;
   traffic: Traffic;
   airport: AirportBuilt;
-  rwy: RunwayController;
+  rwys: RunwayController[] = [];
   aircraft = new Map<number, AircraftSim>();
   vehicles: VehicleSim[] = [];
   jobs: ServiceJob[] = [];
@@ -69,12 +69,17 @@ export class World {
   private scheduler: Scheduler;
   private schedQueue: ScheduleEntry[] = [];
   private jobId = 1;
+  private vehicleId = 1;
   private standOcc = new Map<number, number>();
   private turnaround = new Map<number, TurnaroundState>();
-  private finalApproach: AircraftSim[] = [];
-  private depQueue: AircraftSim[] = [];
-  private depReleased = true;
-  private depClimb: AircraftSim | null = null;
+  private finals: AircraftSim[][] = [];
+  private depQueues: AircraftSim[][] = [];
+  private depReleased: boolean[] = [];
+  private depClimb: (AircraftSim | null)[] = [];
+  private nextRwy = 0;
+  get rwy(): RunwayController {
+    return this.rwys[0];
+  }
   private goarounds = 0;
   private satAccum = 0;
   private satCount = 0;
@@ -89,7 +94,11 @@ export class World {
     this.airport = buildStarterAirport();
     this.net = this.airport.net;
     this.traffic = new Traffic(this.net);
-    this.rwy = new RunwayController(this.net.runways[0], this.net, this.traffic);
+    this.rwys = [new RunwayController(this.net.runways[0], this.net, this.traffic)];
+    this.finals = this.rwys.map(() => []);
+    this.depQueues = this.rwys.map(() => []);
+    this.depReleased = this.rwys.map(() => true);
+    this.depClimb = this.rwys.map(() => null);
     this.scheduler = new Scheduler(seed + 1);
     // pre-generate schedule
     this.topUpSchedule();
@@ -108,7 +117,11 @@ export class World {
 
   private topUpSchedule() {
     if (this.schedQueue.length < 16) {
-      const more = this.scheduler.generate(this.time, 7200, this.level);
+      // only generate entries strictly AFTER the queue's last entry, otherwise
+      // overlapping windows double the arrival rate in bursts
+      const last = this.schedQueue[this.schedQueue.length - 1];
+      const from = last ? last.time + 60 : this.time;
+      const more = this.scheduler.generate(from, 7200, this.level);
       this.schedQueue.push(...more);
       this.schedQueue.sort((a, b) => a.time - b.time);
     }
@@ -121,30 +134,48 @@ export class World {
       { kind: "catering", n: 1 },
       { kind: "push", n: 2 },
     ] as const;
-    let vid = 1;
     for (const vd of vehDefs) {
-      for (let i = 0; i < vd.n; i++) {
-        const home = vd.kind === "fuel" ? this.airport.depots.fuel : this.airport.depots.vehicle;
-        const sv: VehicleState = {
-          id: vid++,
-          kind: vd.kind,
-          label: `${vd.kind}-${i + 1}`,
-          path: [],
-          progress: 0,
-          pos: { ...this.net.node(home) },
-          heading: 0,
-          job: null,
-          homeNode: home,
-          speed: 8,
-          carts: vd.kind === "baggage" ? 2 : 0,
-          loading: 0,
-          retrying: false,
-        };
-        const v = new VehicleSim(this.net, sv, vd.kind === "baggage" ? 9 : 8);
-        v.setTraffic(this.traffic);
-        this.vehicles.push(v);
-      }
+      for (let i = 0; i < vd.n; i++) this.spawnVehicle(vd.kind);
     }
+  }
+
+  /** construct one ground vehicle of the given kind and park it at its depot */
+  private spawnVehicle(kind: string): VehicleSim | null {
+    if (!VEHICLE_BY_KIND.has(kind)) return null;
+    const vid = this.vehicleId++;
+    const home = kind === "fuel" ? this.airport.depots.fuel : this.airport.depots.vehicle;
+    const sv: VehicleState = {
+      id: vid,
+      kind: kind as VehicleState["kind"],
+      label: `${kind}-${this.vehicles.filter((v) => v.state.kind === kind).length + 1}`,
+      path: [],
+      progress: 0,
+      pos: { ...this.net.node(home) },
+      heading: 0,
+      job: null,
+      homeNode: home,
+      speed: 8,
+      carts: kind === "baggage" ? 2 : 0,
+      loading: 0,
+      retrying: false,
+    };
+    const v = new VehicleSim(this.net, sv, kind === "baggage" ? 9 : 8);
+    v.setTraffic(this.traffic);
+    this.vehicles.push(v);
+    return v;
+  }
+
+  /** purchase a new ground vehicle; returns false if unaffordable */
+  buyVehicle(kind: string): boolean {
+    if (this.money < ECO.vehicleCost) return false;
+    if (!this.spawnVehicle(kind)) return false;
+    this.money -= ECO.vehicleCost;
+    this.log(`Purchased ${VEHICLE_BY_KIND.get(kind)?.label ?? kind}`, "good");
+    return true;
+  }
+
+  vehicleCount(kind: string): number {
+    return this.vehicles.filter((v) => v.state.kind === kind).length;
   }
 
   // ------------------------------------------------------------------ main
@@ -209,6 +240,9 @@ export class World {
     if (!def) return;
     const airline = AIRLINES[e.airlineIdx] ?? AIRLINES[0];
     const id = this.scheduler.nextFlightId();
+    // round-robin across runways so a second runway actually carries traffic
+    const rwyIdx = this.nextRwy++ % this.rwys.length;
+    const rwy = this.rwys[rwyIdx].rwy;
     const flight: Flight = {
       id,
       airline: airline.icao,
@@ -223,15 +257,16 @@ export class World {
       pax: e.pax,
       depPax: 0,
       bags: Math.round(e.pax * 0.85),
-      rwyEnd: 0,
+      rwyEnd: rwyIdx,
       phase: "cruise",
       delay: 0,
       progress: 0,
+      phaseStart: 0,
       fuelNeed: 0,
       fuelKg: 0,
       airlineIdx: e.airlineIdx,
       spd: 0,
-      pos: { x: this.rwy.rwy.ends[0].x - 2200, y: 0 },
+      pos: { x: rwy.ends[0].x - 2200, y: rwy.ends[0].y },
       heading: 0,
       path: [],
       pathProgress: 0,
@@ -245,7 +280,8 @@ export class World {
       aborted: false,
     };
     const ac = new AircraftSim(flight, this.net, 9);
-    ac.goaroundX = this.rwy.rwy.ends[0].x - 1750;
+    ac.rwyIdx = rwyIdx;
+    ac.goaroundX = rwy.ends[0].x - 1750;
     this.aircraft.set(flight.id, ac);
   }
 
@@ -257,16 +293,20 @@ export class World {
       case "cruise": {
         if (this.time >= f.spawnTime + 18 && this.canEnterFinal()) {
           ac.phase = "final";
-          this.finalApproach.push(ac);
+          f.phaseStart = this.time;
+          this.finals[ac.rwyIdx].push(ac);
           f.spd = 40;
         }
         break;
       }
       case "final": {
-        const tx = this.rwy.rwy.ends[0].x + 420;
-        const busy = this.rwy.busy;
-        const dist = this.rwy.rwy.ends[0].x - f.pos.x;
-        if (busy && dist < 250) {
+        const c = this.rwys[ac.rwyIdx];
+        const tx = c.rwy.ends[0].x + 420;
+        const busy = c.busy;
+        const dist = c.rwy.ends[0].x - f.pos.x;
+        // go around EARLY (1400m out) instead of crawling to the threshold:
+        // the racetrack west of the field is the holding stack
+        if (busy && dist < 1400) {
           if (ac.goaroundMode === "none") {
             this.stats.goArounds++;
             this.log("Go-around: " + f.flightNo + " rejected for runway congestion", "warn");
@@ -289,15 +329,25 @@ export class World {
         break;
       }
       case "taxiIn": {
-        if (ac.standLeadNode < 0 || ac.targetStand < 0) {
-          // not assigned yet: hold at current node
+        // Holding-bay aircraft (no stand yet) must still drive their park
+        // path. Freezing every unassigned aircraft on the taxiway strands
+        // them (mover.done never fires, so the re-assignment branch below is
+        // unreachable), waitingStand never drains, and canEnterFinal stays
+        // closed forever -> the airport starves.
+        if (ac.mover.path.length < 2) {
+          // no path yet: hold at current node
           ac.mover.speed = 0;
           break;
         }
         const blocked = ac.mover.step(dt, this.traffic, 8);
         if (blocked && ac.mover.blockedSince > 12) {
           const stand = this.airport.stands[ac.targetStand];
-          if (stand) this.rerouteAircraft(ac, stand.node);
+          if (stand) {
+            this.rerouteAircraft(ac, stand.node);
+          } else {
+            const park = ac.mover.path[ac.mover.path.length - 1];
+            if (park !== undefined) this.rerouteAircraft(ac, park);
+          }
         }
         if (ac.mover.done) {
           if (this.isAtStand(ac)) {
@@ -311,10 +361,10 @@ export class World {
       }
       case "taxiOut": {
         const blocked = ac.mover.step(dt, this.traffic, 8);
-        if (blocked && ac.mover.blockedSince > 12) this.rerouteAircraft(ac, this.rwy.rwy.depHold);
+        if (blocked && ac.mover.blockedSince > 12) this.rerouteAircraft(ac, this.rwys[ac.rwyIdx].rwy.depHold);
         if (ac.mover.done && ac.phase === "taxiOut") {
           ac.phase = "holding";
-          this.depQueue.push(ac);
+          this.depQueues[ac.rwyIdx].push(ac);
         }
         break;
       }
@@ -327,10 +377,17 @@ export class World {
 
   private canEnterFinal(): boolean {
     // don't stack approaches too close behind each other, and don't let the
-    // stand-holding queue explode (the holding bay is small)
-    const last = this.finalApproach[this.finalApproach.length - 1];
-    if (last && this.time - last.flight.spawnTime < 26) return false;
-    if (this.finalApproach.length >= 3) return false;
+    // stand-holding queue explode (the holding bay is small).
+    // Spacing is measured from ACTUAL final entry (not scheduled spawn time)
+    // and must cover the full runway cycle, otherwise the trailer reaches the
+    // threshold while the runway is still busy and is forced into a go-around.
+    let total = 0;
+    for (const q of this.finals) {
+      const last = q[q.length - 1];
+      if (last && this.time - last.flight.phaseStart < 60) return false;
+      total += q.length;
+    }
+    if (total >= 3 * this.finals.length) return false;
     let waiting = 0;
     for (const ac of this.aircraft.values()) if (ac.waitingStand) waiting++;
     return waiting < 3;
@@ -341,7 +398,15 @@ export class World {
   }
 
   private stepRunway(dt: number) {
-    const c = this.rwy;
+    for (let ri = 0; ri < this.rwys.length; ri++) {
+      const c = this.rwys[ri];
+      this.stepOneRunway(c, ri, dt);
+    }
+  }
+
+  private stepOneRunway(c: RunwayController, ri: number, dt: number) {
+    const finals = this.finals[ri];
+    const depQ = this.depQueues[ri];
     c.tick(dt);
     if (c.state === "landing" && c.holder) {
       const off = c.holder.stepLanding(dt, c.rwy);
@@ -382,42 +447,42 @@ export class World {
       const ac = c.holder;
       if (ac.stepTakeoff(dt, c)) {
         ac.phase = "gone";
-        if (!this.depReleased) c.finishOperation();
-      } else if (ac.isClimbing && !this.depReleased) {
+        if (!this.depReleased[ri]) c.finishOperation();
+      } else if (ac.isClimbing && !this.depReleased[ri]) {
         // airborne over the far end: runway is free for the next op
-        this.depReleased = true;
-        this.depClimb = ac;
+        this.depReleased[ri] = true;
+        this.depClimb[ri] = ac;
         c.finishOperation();
       }
-    } else if (c.state === "clear" && this.depClimb) {
+    } else if (c.state === "clear" && this.depClimb[ri]) {
       // keep driving the climb-out visual until it leaves the field
-      if (this.depClimb.stepTakeoff(dt, c)) {
-        this.depClimb.phase = "gone";
-        this.depClimb = null;
+      if (this.depClimb[ri]!.stepTakeoff(dt, c)) {
+        this.depClimb[ri]!.phase = "gone";
+        this.depClimb[ri] = null;
       }
     } else if (c.state === "clear") {
       // decide next operation
-      const closest = this.closestFinalDist();
+      const closest = this.closestFinalDist(ri);
       if (closest < 1200) {
-        const ac = this.nextLandingCandidate();
+        const ac = this.nextLandingCandidate(ri);
         if (ac && c.tryStartLanding(ac)) {
-          this.finalApproach.splice(this.finalApproach.indexOf(ac), 1);
+          finals.splice(finals.indexOf(ac), 1);
         }
-      } else if (this.depQueue.length > 0 && closest > 3200) {
-        const ac = this.depQueue[0];
+      } else if (depQ.length > 0 && closest > 3200) {
+        const ac = depQ[0];
         if (c.tryStartLineup(ac)) {
-          this.depQueue.shift();
+          depQ.shift();
           ac.phase = "takeoff";
-          this.depReleased = false;
+          this.depReleased[ri] = false;
         }
       }
     }
   }
 
-  private closestFinalDist(): number {
+  private closestFinalDist(ri: number): number {
     let best = Infinity;
-    const t = this.rwy.rwy.ends[0].x;
-    for (const ac of this.finalApproach) {
+    const t = this.rwys[ri].rwy.ends[0].x;
+    for (const ac of this.finals[ri]) {
       if (ac.goaroundMode !== "none") continue;
       const d = t - ac.flight.pos.x;
       if (d < best) best = d;
@@ -425,11 +490,11 @@ export class World {
     return best;
   }
 
-  private nextLandingCandidate(): AircraftSim | null {
+  private nextLandingCandidate(ri: number): AircraftSim | null {
     let best: AircraftSim | null = null;
     let bd = Infinity;
-    const t = this.rwy.rwy.ends[0].x;
-    for (const ac of this.finalApproach) {
+    const t = this.rwys[ri].rwy.ends[0].x;
+    for (const ac of this.finals[ri]) {
       if (ac.goaroundMode !== "none" || ac.phase !== "final") continue;
       const d = t - ac.flight.pos.x;
       if (d < bd) {
@@ -617,7 +682,7 @@ export class World {
     const tr = this.turnaround.get(f.id)!;
     const fuelProfit = f.fuelKg * (ECO.fuelPerKg - ECO.fuelCostPerKg);
     this.money += tr.depPax * (ECO.depFeePerPax + ECO.terminalRevenuePerPax) * (0.5 + 0.5 * sat) + fuelProfit;
-    const path = findPath(this.net, ac.standLeadNode, this.rwy.rwy.depHold, { aircraft: true });
+    const path = findPath(this.net, ac.standLeadNode, this.rwys[ac.rwyIdx].rwy.depHold, { aircraft: true });
     if (path) ac.setTaxiPath(path);
     // release stand
     this.standOcc.delete(ac.targetStand);
@@ -885,7 +950,7 @@ export class World {
   get queueLengths(): { stand: number; dep: number; jobs: number } {
     let waiting = 0;
     for (const ac of this.aircraft.values()) if (ac.waitingStand) waiting++;
-    return { stand: waiting, dep: this.depQueue.length, jobs: this.jobs.length };
+    return { stand: waiting, dep: this.depQueues.reduce((s, q) => s + q.length, 0), jobs: this.jobs.length };
   }
 
   /** build API (used by tools) */
@@ -930,6 +995,90 @@ export class World {
     this.net.edges = this.net.edges.filter((e) => e.standId !== standId && e.a !== sd.leadNode && e.b !== sd.leadNode && e.a !== sd.serviceNode && e.b !== sd.serviceNode);
     this.net.nodes = this.net.nodes.filter((n) => n.id !== sd.node && n.id !== sd.leadNode && n.id !== sd.serviceNode);
   }
+
+  /**
+   * Build a player runway (must be east-west like the starter runway so the
+   * approach/rollout math holds). Creates the full structure: thresholds,
+   * mid exits, parallel taxiway, connectors to the existing network, hold +
+   * lineup geometry, and registers everything with Traffic.
+   */
+  addRunwayBuilt(x1: number, y: number, x2: number): boolean {
+    const lo = Math.min(x1, x2);
+    const hi = Math.max(x1, x2);
+    const len = hi - lo;
+    if (len < 800) return false;
+    // parallel separation from existing runways
+    for (const r of this.net.runways) {
+      const ry = r.ends[0].y;
+      if (Math.abs(ry - y) < 100) return false;
+    }
+    const net = this.net;
+    const name = x2 > x1 ? "09/27" : "27/09";
+    const rwy = net.addRunway(lo, y, hi, y, name);
+    const t0 = rwy.thresholdNode[0];
+    const t1 = rwy.thresholdNode[1];
+    // split the lane with mid exits (like the starter airport)
+    const mid1On = net.addNode(lo + len * 0.45, y, "runway", { rwyId: rwy.id });
+    const mid2On = net.addNode(lo + len * 0.7, y, "runway", { rwyId: rwy.id });
+    rwy.laneEdges = [
+      net.addEdge(t0, mid1On, { kind: "runway", maxSpeed: 24, rwyId: rwy.id }),
+      net.addEdge(mid1On, mid2On, { kind: "runway", maxSpeed: 24, rwyId: rwy.id }),
+      net.addEdge(mid2On, t1, { kind: "runway", maxSpeed: 24, rwyId: rwy.id }),
+    ];
+    const off1 = net.addNode(lo + len * 0.45 + 85, y - 65, "hold", { rwyId: rwy.id });
+    const off2 = net.addNode(lo + len * 0.7 + 85, y - 65, "hold", { rwyId: rwy.id });
+    net.addEdge(mid1On, off1, { kind: "taxiway", maxSpeed: 7, rwyId: rwy.id });
+    net.addEdge(mid2On, off2, { kind: "taxiway", maxSpeed: 7, rwyId: rwy.id });
+    rwy.exits = [
+      { s: lo + len * 0.45, on: mid1On, off: off1 },
+      { s: lo + len * 0.7, on: mid2On, off: off2 },
+    ];
+    // parallel taxiway on the north side
+    const T = (x: number) => net.addNode(x, y - 65, "taxiway");
+    const tw = T(lo + 80);
+    const twm1 = T(lo + len * 0.45 + 85);
+    const twm2 = T(lo + len * 0.7 + 85);
+    const twE = T(hi - 80);
+    net.addEdge(tw, twm1, { kind: "taxiway", maxSpeed: 9 });
+    net.addEdge(twm1, twm2, { kind: "taxiway", maxSpeed: 9 });
+    net.addEdge(twm2, twE, { kind: "taxiway", maxSpeed: 9 });
+    net.addEdge(off1, twm1, { kind: "taxiway", maxSpeed: 7 });
+    net.addEdge(off2, twm2, { kind: "taxiway", maxSpeed: 7 });
+    // connectors from the new taxiway to the nearest existing network nodes
+    const connect = (x: number): boolean => {
+      const from = net.addNode(x, y - 65, "taxiway");
+      const target = nearestNode(net, x, y - 65, ["taxiway", "hold"], 300);
+      if (target === null || target === from) return false;
+      const eid = net.addEdge(from, target, { kind: "taxiway", maxSpeed: 8 });
+      this.traffic.registerEdge(eid, net.edgeBlocks(net.edge(eid)));
+      return true;
+    };
+    const c1 = connect(lo + 80);
+    const c2 = connect(hi - 80);
+    if (!c1 && !c2) return false; // runway unreachable: reject
+    // departure hold + lineup
+    const depHold = net.addNode(lo, y - 52, "hold", { rwyId: rwy.id });
+    net.addEdge(depHold, tw, { kind: "taxiway", maxSpeed: 8 });
+    rwy.depHold = depHold;
+    rwy.lineupEdge = net.addEdge(depHold, t0, { kind: "taxiway", maxSpeed: 8, rwyId: rwy.id });
+    const eastConn = net.addNode(hi + 40, y - 65, "taxiway");
+    net.addEdge(t1, eastConn, { kind: "taxiway", maxSpeed: 9 });
+    net.addEdge(twE, eastConn, { kind: "taxiway", maxSpeed: 9 });
+    rwy.rolloutEdge = net.addEdge(t1, eastConn, { kind: "taxiway", maxSpeed: 7, rwyId: rwy.id });
+    rwy.exitNode = [depHold, eastConn];
+    // register EVERYTHING new
+    for (const n of net.nodes) this.traffic.registerNode(n.id);
+    for (const e of net.edges) this.traffic.registerEdge(e.id, net.edgeBlocks(e));
+    // new controller for this runway
+    const ctrl = new RunwayController(rwy, net, this.traffic);
+    this.rwys.push(ctrl);
+    this.finals.push([]);
+    this.depQueues.push([]);
+    this.depReleased.push(true);
+    this.depClimb.push(null);
+    this.log(`New runway ${name} (${len.toFixed(0)}m) opened`, "good");
+    return true;
+  }
 }
 
 function jobTarget(v: VehicleSim): number {
@@ -940,5 +1089,10 @@ function fmtDelay(sec: number): string {
   const m = Math.round(sec / 60);
   return m >= 60 ? `${Math.floor(m / 60)}h${m % 60}m` : `${m}m`;
 }
+
+
+
+
+
 
 

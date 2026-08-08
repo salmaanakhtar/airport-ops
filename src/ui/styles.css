@@ -178,6 +178,48 @@ body {
   box-shadow: 0 0 0 1px var(--accent);
 }
 
+.fleet-panel {
+  display: none;
+  background: var(--panel);
+  border: 1px solid var(--panel-border);
+  border-radius: 6px;
+  padding: 8px 10px;
+  min-width: 200px;
+}
+
+.fleet-row {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 3px 0;
+  font-size: 11px;
+}
+
+.fleet-name {
+  flex: 1;
+}
+
+.fleet-count {
+  color: var(--accent2);
+  min-width: 30px;
+  text-align: right;
+}
+
+.fleet-buy {
+  background: rgba(30, 40, 52, 0.9);
+  border: 1px solid var(--panel-border);
+  color: var(--good);
+  font-family: inherit;
+  font-size: 10px;
+  cursor: pointer;
+  border-radius: 4px;
+  padding: 3px 8px;
+}
+
+.fleet-buy:hover {
+  border-color: var(--good);
+}
+
 /* ---------- right column ---------- */
 .rightcol {
   position: absolute;

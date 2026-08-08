@@ -19,6 +19,8 @@ export class AircraftSim {
   standHeading = -Math.PI / 2;
   targetStand = -1;
   waitingStand = false;
+  /** which RunwayController this aircraft uses (set at spawn) */
+  rwyIdx = 0;
   private touchdownX = 0;
   private landingSub: "approach" | "roll" | "exit" | "endExit" = "approach";
   private exitTarget: Vec = { x: 0, y: 0 };

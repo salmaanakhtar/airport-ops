@@ -2,7 +2,7 @@ import type { Engine } from "./engine";
 import { findPath, nearestNode } from "./sim/pathfind";
 import { ECO } from "./game/config";
 
-export type ToolId = "pan" | "taxiway" | "stand" | "fuel" | "delete";
+export type ToolId = "pan" | "taxiway" | "stand" | "fuel" | "runway" | "delete";
 
 export interface BuildResult {
   ok: boolean;
@@ -103,7 +103,8 @@ export class InputController {
     else if (e.key === "2") this.setTool("taxiway");
     else if (e.key === "3") this.setTool("stand");
     else if (e.key === "4") this.setTool("fuel");
-    else if (e.key === "5") this.setTool("delete");
+    else if (e.key === "5") this.setTool("runway");
+    else if (e.key === "6") this.setTool("delete");
   }
 
   private mouseWorld(e: { clientX: number; clientY: number }): { x: number; y: number } {
@@ -180,6 +181,29 @@ export class InputController {
         w.money -= 200000;
         this.renderDirty();
         this.toast("Built fuel depot");
+        break;
+      }
+      case "runway": {
+        // drag west->east (or east->west); y snapped to the grid
+        const nx = this.snap(x);
+        const ny = this.snap(y);
+        const len = Math.abs(nx - bs.x);
+        if (len < 800) {
+          this.toast("Runways need at least 800m");
+          return;
+        }
+        const cost = len * ECO.runwayCostPerM;
+        if (w.money < cost) {
+          this.toast("Not enough funds for a runway");
+          return;
+        }
+        if (w.addRunwayBuilt(bs.x, ny, nx)) {
+          w.money -= cost;
+          this.renderDirty();
+          this.toast(`Built runway ${(len / 1000).toFixed(1)}km`);
+        } else {
+          this.toast("Runway rejected: too close to another runway or unreachable");
+        }
         break;
       }
       case "delete": {

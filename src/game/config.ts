@@ -65,9 +65,9 @@ export const VEHICLE_BY_KIND = new Map(VEHICLES.map((v) => [v.kind, v]));
 /** Economy constants. Money in dollars. */
 export const ECO = {
   baseCapital: 2_500_000,
-  landFeePerPax: 5.5,
-  depFeePerPax: 6.5,
-  terminalRevenuePerPax: 4.2,
+  landFeePerPax: 8.0,
+  depFeePerPax: 9.0,
+  terminalRevenuePerPax: 5.0,
   fuelPerKg: 0.85,
   fuelCostPerKg: 0.5, // wholesale cost to the airport
   fuelDensity: 0.8, // kg per liter
@@ -77,8 +77,9 @@ export const ECO = {
   buildingCostPerM2: 2400,
   runwayCostPerM: 900,
   taxiwayCostPerM: 400,
-  standCost: 480_000,
-  bridgeCost: 220_000,
+  standCost: 240_000,
+  bridgeCost: 120_000,
+  vehicleCost: 150_000,
 };
 
 export const SIM = {

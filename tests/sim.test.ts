@@ -85,6 +85,16 @@ describe("AIRPORT // OPS simulation lifecycle", () => {
     expect(ac.mover.blockedSince).toBeLessThan(10);
   });
 
+  it("no starvation deadlock: airport keeps processing past 4.5h (regression: unassigned aircraft froze on the taxiway and canEnterFinal closed forever)", () => {
+    const w3 = new World(42);
+    const step = 1 / 30;
+    let guard = 0;
+    while (w3.time < 16500 && guard++ < 16500 * 60) w3.tick(step);
+    expect(w3.stats.arrivals, "arrivals should keep coming in, not stall at ~53").toBeGreaterThan(60);
+    const frozen = [...w3.aircraft.values()].filter((a) => a.phase === "taxiIn" && a.waitingStand && a.targetStand < 0 && a.mover.s < 1);
+    expect(frozen.length, "waiting aircraft must keep taxiing to the holding bay, not freeze").toBeLessThan(2);
+  });
+
   it("money is spent on staff but still solvent", () => {
     expect(w.money).toBeGreaterThan(0);
   });

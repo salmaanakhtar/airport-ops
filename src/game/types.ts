@@ -133,6 +133,8 @@ export interface Flight {
   gate?: number;
   delay: number;
   progress: number;
+  /** time the current phase started (for spacing/gates) */
+  phaseStart: number;
   fuelNeed: number;
   fuelKg: number;
   cargoKg?: number;
