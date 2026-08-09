@@ -40,6 +40,26 @@ export class InputController {
     this.engine.ui.setTool(t);
   }
 
+  /**
+   * State consumed by the renderer's build overlay (eligible-location
+   * highlights, placement ghosts, cost readouts).
+   */
+  buildOverlay(): {
+    tool: ToolId;
+    hover: { x: number; y: number } | null;
+    drag: { sx: number; sy: number; node: number } | null;
+  } {
+    let hover: { x: number; y: number } | null = null;
+    if (this.hover) {
+      hover = { x: this.engine.cam.worldX(this.hover.x), y: this.engine.cam.worldY(this.hover.y) };
+    }
+    return {
+      tool: this.tool,
+      hover,
+      drag: this.buildStart ? { sx: this.buildStart.x, sy: this.buildStart.y, node: this.buildStart.node } : null,
+    };
+  }
+
   onDown(e: PointerEvent) {
     this.mouseBtn = e.button;
     if (this.tool === "pan" || e.button === 1 || e.button === 2) {

@@ -25,9 +25,9 @@ export class Engine {
     this.canvas = canvas;
     this.world = new World();
     this.cam = new Camera(window.innerWidth, window.innerHeight);
-    this.renderer = new Renderer(canvas, this.world, this.cam);
     this.ui = new UI(this);
     this.input = new InputController(this);
+    this.renderer = new Renderer(canvas, this.world, this.cam, this.input);
     window.addEventListener("resize", () => this.resize());
     this.resize();
     this.step = this.step.bind(this);
