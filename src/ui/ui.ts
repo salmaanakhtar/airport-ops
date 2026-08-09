@@ -78,6 +78,7 @@ export class UI {
     // fleet panel toggle
     const fleetBtn = document.createElement("button");
     fleetBtn.className = "tool-btn";
+    fleetBtn.id = "fleet-btn";
     fleetBtn.innerHTML = `<span class="tool-icon">🚚</span><span class="tool-label">Fleet<br><small>buy vehicles</small></span>`;
     fleetBtn.addEventListener("click", () => this.toggleFleet());
     tb.appendChild(fleetBtn);
@@ -112,6 +113,9 @@ export class UI {
   toggleFleet() {
     this.fleetOpen = !this.fleetOpen;
     if (this.fleetPanel) this.fleetPanel.style.display = this.fleetOpen ? "block" : "none";
+    const btn = this.root.querySelector<HTMLButtonElement>("#fleet-btn");
+    if (btn) btn.classList.toggle("active", this.fleetOpen);
+    if (this.fleetOpen) this.updateFleet();
   }
 
   private updateFleet() {

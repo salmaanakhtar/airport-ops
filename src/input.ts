@@ -37,6 +37,7 @@ export class InputController {
     this.tool = t;
     this.buildStart = null;
     this.draggingNode = null;
+    this.engine.ui.setTool(t);
   }
 
   onDown(e: PointerEvent) {

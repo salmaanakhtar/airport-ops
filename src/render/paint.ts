@@ -17,6 +17,8 @@ export class AirfieldPainter {
   private standPads: Path2D[] = [];
   private dirty = true;
   private night = false;
+  /** device pixel ratio; set by the renderer before each frame */
+  dpr = 1;
   private texAsphalt: CanvasPattern | null = null;
   private texGrass: CanvasPattern | null = null;
   private texRunway: CanvasPattern | null = null;
@@ -119,7 +121,7 @@ export class AirfieldPainter {
   }
 
   private applyTransform(g: CanvasRenderingContext2D, cam: Camera) {
-    g.setTransform(cam.ppm, 0, 0, cam.ppm, cam.viewW / 2 - cam.x * cam.ppm, cam.viewH / 2 - cam.y * cam.ppm);
+    g.setTransform(cam.ppm * this.dpr, 0, 0, cam.ppm * this.dpr, this.dpr * (cam.viewW / 2 - cam.x * cam.ppm), this.dpr * (cam.viewH / 2 - cam.y * cam.ppm));
   }
 
   draw(g: CanvasRenderingContext2D, cam: Camera) {
@@ -435,10 +437,9 @@ export class AirfieldPainter {
       g.fillStyle = "#56606b";
       g.fillRect(fromX - 5, fromY - 2, 10, 4);
     }
-    // fuel depot
-    const f = w.airport.depots.fuel;
-    if (f >= 0) {
-      const n = w.net.node(f);
+    // fuel depots: the starter depot plus every player-placed one
+    const fuelNodes = w.net.nodes.filter((n) => n.service === "fuel");
+    for (const n of fuelNodes) {
       g.fillStyle = "rgba(0,0,0,0.3)";
       g.fillRect(n.x - 16 + 2, n.y - 8 + 3, 32, 20);
       g.fillStyle = "#5a5f66";

@@ -42,13 +42,14 @@ export class Renderer {
     g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     g.clearRect(0, 0, this.canvas.width, this.canvas.height);
 
+    this.painter.dpr = this.dpr;
     this.painter.draw(g, this.cam);
 
     // dynamic agents
     this.drawAgents(g, night);
 
     if (night) {
-      g.setTransform(1, 0, 0, 1, 0, 0);
+      g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
       g.fillStyle = "rgba(8,10,26,0.52)";
       g.fillRect(0, 0, this.canvas.width, this.canvas.height);
       // light glows
@@ -60,7 +61,7 @@ export class Renderer {
     const cam = this.cam;
     const w = this.world;
     const net = w.net;
-    g.setTransform(1, 0, 0, 1, 0, 0);
+    g.setTransform(this.dpr, 0, 0, this.dpr, 0, 0);
     const glow = (x: number, y: number, r: number, color: string) => {
       const sx = (x - cam.x) * cam.ppm + cam.viewW / 2;
       const sy = (y - cam.y) * cam.ppm + cam.viewH / 2;
@@ -168,7 +169,7 @@ export class Renderer {
     // vehicles
     for (const v of world.vehicles) {
       const sv = v.state;
-      push(sv.pos.y, () => drawVehicle(g, v, cam, world));
+      push(sv.pos.y, () => drawVehicle(g, v, cam, world, this.dpr));
     }
     // aircraft (phase source of truth is AircraftSim.phase, NOT flight.phase)
     for (const ac of world.aircraft.values()) {
@@ -176,7 +177,7 @@ export class Renderer {
       if (ac.phase === "cruise") continue;
       if (ac.phase === "gone") continue;
       const p = ac.pos;
-      push(p.y, () => drawAircraft(g, ac, cam, night));
+      push(p.y, () => drawAircraft(g, ac, cam, night, this.dpr));
     }
     items.sort((a, b) => a.y - b.y);
     (window as any).__dbgItems = items.length;
@@ -203,7 +204,7 @@ export class Renderer {
   }
 }
 
-function drawAircraft(g: CanvasRenderingContext2D, ac: any, cam: Camera, night: boolean) {
+function drawAircraft(g: CanvasRenderingContext2D, ac: any, cam: Camera, night: boolean, dpr: number) {
   const f = ac.flight;
   const def = f.acTypeDef;
   const airline = AIRLINES[f.airlineIdx] ?? AIRLINES[0];
@@ -212,13 +213,13 @@ function drawAircraft(g: CanvasRenderingContext2D, ac: any, cam: Camera, night: 
   const p = ac.pos;
   const x = (p.x - cam.x) * cam.ppm + cam.viewW / 2;
   const y = (p.y - cam.y) * cam.ppm + cam.viewH / 2;
-  g.setTransform(scale, 0, 0, scale, x, y);
+  g.setTransform(scale * dpr, 0, 0, scale * dpr, x * dpr, y * dpr);
   g.rotate(ac.heading + Math.PI / 2);
   g.drawImage(spr.canvas, -spr.canvas.width / 2, -spr.canvas.height / 2);
-  g.setTransform(1, 0, 0, 1, 0, 0);
-  if (night && (f.phase === "final" || f.phase === "landing")) {
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
+  if (night && (ac.phase === "final" || ac.phase === "landing")) {
     // landing light glow at nose
-    g.setTransform(1, 0, 0, 1, x, y);
+    g.setTransform(dpr, 0, 0, dpr, x * dpr, y * dpr);
     const dirx = Math.cos(ac.heading);
     const diry = Math.sin(ac.heading);
     const nx = dirx * (def.len / 2) * cam.ppm;
@@ -230,23 +231,23 @@ function drawAircraft(g: CanvasRenderingContext2D, ac: any, cam: Camera, night: 
   }
 }
 
-function drawVehicle(g: CanvasRenderingContext2D, v: any, cam: Camera, world: World) {
+function drawVehicle(g: CanvasRenderingContext2D, v: any, cam: Camera, world: World, dpr: number) {
   const sv = v.state;
   const scale = cam.ppm / 8;
   const p = sv.pos;
   const x = (p.x - cam.x) * cam.ppm + cam.viewW / 2;
   const y = (p.y - cam.y) * cam.ppm + cam.viewH / 2;
   // soft shadow
-  g.setTransform(scale, 0, 0, scale, x + 4, y + 5);
+  g.setTransform(scale * dpr, 0, 0, scale * dpr, (x + 4) * dpr, (y + 5) * dpr);
   g.rotate(sv.heading + Math.PI / 2);
   g.globalAlpha = 0.3;
   g.fillStyle = "#000";
   drawVehicleShape(g, sv.kind, sv.carts, sv.label, true);
   g.globalAlpha = 1;
-  g.setTransform(scale, 0, 0, scale, x, y);
+  g.setTransform(scale * dpr, 0, 0, scale * dpr, x * dpr, y * dpr);
   g.rotate(sv.heading + Math.PI / 2);
   drawVehicleShape(g, sv.kind, sv.carts, sv.label);
-  g.setTransform(1, 0, 0, 1, 0, 0);
+  g.setTransform(dpr, 0, 0, dpr, 0, 0);
 }
 
 function drawVehicleShape(g: CanvasRenderingContext2D, kind: string, carts: number, label: string, shadow = false) {
